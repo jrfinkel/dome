@@ -191,6 +191,34 @@
                 strut cluster]
             [strut new-strut]))))
 
+;; deciding how to cut conduit
+(defn find-best-cuts [all-struts]
+  (let [add (fn [cuts curr]
+              (->> curr
+                   (map #(dissoc % :count))
+                   (conj cuts)))]
+    (loop [cuts []
+           curr #{}
+           remaining all-struts]
+      (if-not (seq remaining)
+        (if (seq curr) (add cuts curr) cuts)
+        (if-let [to-add (->> remaining
+                             (filter (fn [{l :length c :count}]
+                                       (and (> c 0) (< l (- 10 (apply + 0 (map :length curr)))))))
+                             (sort-by :length)
+                             last)]
+          (recur cuts
+                 (conj curr to-add)
+                 (keep (fn [strut]
+                         (if (= strut to-add)
+                           (when (> (:count strut) 1)
+                             (update-in strut [:count] dec))
+                           strut))
+                       remaining))
+          (recur (add cuts curr)
+                 #{}
+                 remaining))))))
+
 ;; for 5v icosa
 
 (def +icosa-5v-extras+ #{#{[5 2] [5 3]}
@@ -208,17 +236,25 @@
   (+ (* 5 (count struts))
      (* 2 (->> struts (filter (fn [[_ p1 p2]] (+icosa-5v-extras+ #{p1 p2}))) count))))
 
-(defn icosa-5v-struts [smaller-radius]
+(defn icosa-5v-struts [smaller-radius & [extra-struts extra-length]]
   (let [the-struts (struts 5 smaller-radius (* 1.618034 smaller-radius) nil true)
-        consolidated-strut-mapping (consolidate-struts 0.0075 (map last the-struts))]
-    (->> the-struts
-         (map (fn [[s1 s2 length]]
-                [(-> [(:point-2d s1) (:point-2d s2)] sort (conj (truncate length)))
-                 (get consolidated-strut-mapping length)]))
-         (group-by second)
-         (sort-by first)
-         (map-indexed (fn [i [k v]]
-                        (let [struts (map first v)]
-                          [i {:length k
-                              :count (strut-count struts)
-                              :struts struts}]))))))
+        consolidated-strut-mapping (consolidate-struts 0.0075 (map last the-struts))
+        consolidated-struts (->> the-struts
+                                 (map (fn [[s1 s2 length]]
+                                        [(-> [(:point-2d s1) (:point-2d s2)] sort (conj (truncate length)))
+                                         (get consolidated-strut-mapping length)]))
+                                 (group-by second)
+                                 (sort-by first)
+                                 (map-indexed (fn [i [k v]]
+                                                (let [struts (map first v)]
+                                                  {:id i
+                                                   :length k
+                                                   :count (strut-count struts)
+                                                   :struts struts}))))
+        best-cuts (find-best-cuts (map #(-> %
+                                            (dissoc :struts)
+                                            (update-in [:length] + (or extra-length 0.3))
+                                            (update-in [:count] + (or extra-struts 1)))
+                                       consolidated-struts))]
+    {:struts consolidated-struts
+     :cuts best-cuts}))
