@@ -1,4 +1,5 @@
-(ns dome.core)
+(ns dome.core
+  (:use clojure.pprint))
 
 ;;; helpers
 
@@ -23,6 +24,13 @@
 (defn tan [x] (Math/tan x))
 (defn atan [x] (Math/atan x))
 (defn sq [x] (Math/pow x 2))
+
+(defn mean [coll]
+  (let [sum (apply + coll)
+        count (count coll)]
+    (if (pos? count)
+      (/ sum count)
+      0)))
 
 (defn ->cartesian [point]
   {:z (* (:radius point) (sin (:theta point)) (cos (:phi point)))
@@ -153,11 +161,64 @@
                                         (* m (:x c1)) (:y c1) (* m (:z c1))
                                         (* m (:x c2)) (:y c2) (* m (:z c2))))))))
 
-(defn ->strut-counts [struts]
-  (->> struts (map (comp truncate last)) frequencies (sort-by first)))
-
 (defn display [struts]
   (pprint
    (map (fn [[p1 p2 dist]]
           [(:point-2d p2) (:point-2d p1) dist])
         struts)))
+
+;; combining struts that are similar in length
+(defn within-difference? [margin cluster]
+  (let [min-x (apply min cluster)
+        max-x (apply max cluster)]
+    (< (- max-x min-x) margin)))
+
+(defn consolidate-struts [margin lengths]
+  (let [clusters (loop [clusters (->> lengths
+                                      distinct
+                                      (map (fn [x] [x])))]
+                   (let [[c1 c2] (first (for [c1 clusters
+                                              c2 clusters
+                                              :when (and (not= c1 c2)
+                                                         (within-difference? margin (concat c1 c2)))]
+                                          [c1 c2]))]
+                     (if c1
+                       (recur (->> clusters (remove #{c1 c2}) (cons (concat c1 c2))))
+                       clusters)))]
+    (into {}
+          (for [cluster clusters
+                :let [new-strut (truncate (mean cluster))]
+                strut cluster]
+            [strut new-strut]))))
+
+;; for 5v icosa
+
+(def +icosa-5v-extras+ #{#{[5 2] [5 3]}
+                         #{[5 2] [6 3]}
+                         #{[5 3] [6 3]}
+                         #{[5 3] [6 4]}
+                         #{[6 3] [6 4]}
+                         #{[6 3] [7 4]}
+                         #{[6 4] [7 4]}
+                         #{[6 4] [7 5]}
+                         #{[7 4] [7 5]}
+                         #{[7 4] [8 5]}})
+
+(defn strut-count [struts]
+  (+ (* 5 (count struts))
+     (* 2 (->> struts (filter (fn [[_ p1 p2]] (+icosa-5v-extras+ #{p1 p2}))) count))))
+
+(defn icosa-5v-struts [smaller-radius]
+  (let [the-struts (struts 5 smaller-radius (* 1.618034 smaller-radius) nil true)
+        consolidated-strut-mapping (consolidate-struts 0.0075 (map last the-struts))]
+    (->> the-struts
+         (map (fn [[s1 s2 length]]
+                [(-> [(:point-2d s1) (:point-2d s2)] sort (conj (truncate length)))
+                 (get consolidated-strut-mapping length)]))
+         (group-by second)
+         (sort-by first)
+         (map-indexed (fn [i [k v]]
+                        (let [struts (map first v)]
+                          [i {:length k
+                              :count (strut-count struts)
+                              :struts struts}]))))))
