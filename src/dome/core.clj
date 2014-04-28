@@ -236,25 +236,30 @@
   (+ (* 5 (count struts))
      (* 2 (->> struts (filter (fn [[_ p1 p2]] (+icosa-5v-extras+ #{p1 p2}))) count))))
 
+(defn consolidate-struts [the-struts consolidated-strut-mapping]
+  (->> the-struts
+       (map (fn [[s1 s2 length]]
+              [(-> [(:point-2d s1) (:point-2d s2)] sort (conj (truncate length)))
+               (get consolidated-strut-mapping length)]))
+       (group-by second)
+       (sort-by first)
+       (map-indexed (fn [i [k v]]
+                      (let [struts (map first v)]
+                        {:id i
+                         :length k
+                         :count (strut-count struts)
+                         :struts struts})))))
+
 (defn icosa-5v-struts [smaller-radius & [extra-struts extra-length]]
   (let [the-struts (struts 5 smaller-radius (* 1.618034 smaller-radius) nil true)
         consolidated-strut-mapping (consolidate-struts 0.0075 (map last the-struts))
-        consolidated-struts (->> the-struts
-                                 (map (fn [[s1 s2 length]]
-                                        [(-> [(:point-2d s1) (:point-2d s2)] sort (conj (truncate length)))
-                                         (get consolidated-strut-mapping length)]))
-                                 (group-by second)
-                                 (sort-by first)
-                                 (map-indexed (fn [i [k v]]
-                                                (let [struts (map first v)]
-                                                  {:id i
-                                                   :length k
-                                                   :count (strut-count struts)
-                                                   :struts struts}))))
+        consolidated-struts (consolidate-struts the-struts consolidated-strut-mapping)
         best-cuts (find-best-cuts (map #(-> %
                                             (dissoc :struts)
                                             (update-in [:length] + (or extra-length 0.3))
                                             (update-in [:count] + (or extra-struts 1)))
                                        consolidated-struts))]
     {:struts consolidated-struts
-     :cuts best-cuts}))
+     :cuts best-cuts
+     :diff-from-old-big-dome (- (* 20 20 Math/PI)
+                                (* smaller-radius smaller-radius 1.618 Math/PI))}))
