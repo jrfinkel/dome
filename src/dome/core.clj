@@ -3,7 +3,17 @@
 
 ;;; helpers
 
-(defn truncate [f] (double (/ (int (* f 1e7)) 1e7)))
+(defn round [f & [x]] (double (/ (Math/round (* f (or x 1e7))) (or x 1e7))))
+
+(defn map-vals [f m]
+  (->> m
+       (map (fn [[k v]] [k (f v)]))
+       (into {})))
+
+(defn map-keys [f m]
+  (->> m
+       (map (fn [[k v]] [(f k) v]))
+       (into {})))
 
 (defn distinct-by
   "Returns elements of xs which return unique
@@ -32,10 +42,12 @@
       (/ sum count)
       0)))
 
-(defn ->cartesian [point]
-  {:z (* (:radius point) (sin (:theta point)) (cos (:phi point)))
+(defn ->cartesian
+  "theta and phi are in radians"
+  [point]
+  {:x (* (:radius point) (cos (:theta point)))
    :y (* (:radius point) (sin (:theta point)) (sin (:phi point)))
-   :x (* (:radius point) (cos (:theta point)))})
+   :z (* (:radius point) (sin (:theta point)) (cos (:phi point)))})
 
 ;;; geometry
 
@@ -117,33 +129,20 @@
       {:phi (cond (zero? x1) 0 (zero? y1) (Math/toRadians (if icosa-ellipse? 72 90)) :else (atan (/ x1 y1)))
        :theta (if (zero? z1) (Math/toRadians (if icosa-ellipse? 72 90)) (atan (/ (Math/sqrt (+ (sq x1) (sq y1))) z1)))})))
 
-(defn correction [angles E & [correction-type]]
-  (if-not correction-type
-    angles
-    (do (assert (#{:E :E2 :E3 :E4} correction-type))
-        (update-in angles [:theta] (fn [theta]
-                                     (atan (/ (tan theta)
-                                              (case correction-type
-                                                :E2 (Math/sqrt E)
-                                                :E3 (Math/pow E (/ 1 3))
-                                                :E4 (Math/pow E (/ 1 20))
-                                                :E E))))))))
-
 (defn add-radius [angles r1 r2]
   (assoc angles :radius (->radius r1 r2 (:theta angles))))
 
-(defn project-point [point freq r1 r2 & [correction-type icosa-ellipse?]]
+(defn project-point [point freq r1 r2 & [icosa-ellipse?]]
   (-> (->angles-2d point freq icosa-ellipse?)
-      (correction (/ r1 r2) correction-type)
       (add-radius r1 r2)
       (assoc :point-2d point :point-3d (->3d point freq))))
 
-(defn struts [freq r1 r2 & [correction-type icosa-ellipse?]]
+(defn struts [freq r1 r2 & [icosa-ellipse?]]
   (let [points (points-2d freq icosa-ellipse?)]
     (for [point points
           neighbor (neighbors-2d point points)
-          :let [p1 (project-point point freq r1 r2 correction-type icosa-ellipse?)
-                p2 (project-point neighbor freq r1 r2 correction-type icosa-ellipse?)]]
+          :let [p1 (project-point point freq r1 r2 icosa-ellipse?)
+                p2 (project-point neighbor freq r1 r2 icosa-ellipse?)]]
       [p1 p2 (distance p1 p2)])))
 
 (defn ->display-format [struts icosa? outfile]
@@ -173,7 +172,7 @@
         max-x (apply max cluster)]
     (< (- max-x min-x) margin)))
 
-(defn consolidate-struts [margin lengths]
+(defn consolidate-struts-mapping [margin lengths]
   (let [clusters (loop [clusters (->> lengths
                                       distinct
                                       (map (fn [x] [x])))]
@@ -187,7 +186,7 @@
                        clusters)))]
     (into {}
           (for [cluster clusters
-                :let [new-strut (truncate (mean cluster))]
+                :let [new-strut (round (mean cluster))]
                 strut cluster]
             [strut new-strut]))))
 
@@ -232,14 +231,19 @@
                          #{[7 4] [7 5]}
                          #{[7 4] [8 5]}})
 
-(defn strut-count [struts]
+(defn strut-count [struts freq]
   (+ (* 5 (count struts))
-     (* 2 (->> struts (filter (fn [[_ p1 p2]] (+icosa-5v-extras+ #{p1 p2}))) count))))
+     (cond
+      (= 5 freq)
+      (->> struts (filter (fn [[_ p1 p2]] (+icosa-5v-extras+ #{p1 p2}))) count (* 2))
 
-(defn consolidate-struts [the-struts consolidated-strut-mapping]
+      :else
+      (assert false))))
+
+(defn consolidate-struts [the-struts consolidated-strut-mapping freq]
   (->> the-struts
        (map (fn [[s1 s2 length]]
-              [(-> [(:point-2d s1) (:point-2d s2)] sort (conj (truncate length)))
+              [(-> [(:point-2d s1) (:point-2d s2)] sort (conj (round length)))
                (get consolidated-strut-mapping length)]))
        (group-by second)
        (sort-by first)
@@ -247,19 +251,30 @@
                       (let [struts (map first v)]
                         {:id i
                          :length k
-                         :count (strut-count struts)
+                         :count (strut-count struts freq)
                          :struts struts})))))
 
-(defn icosa-5v-struts [smaller-radius & [extra-struts extra-length]]
-  (let [the-struts (struts 5 smaller-radius (* 1.618034 smaller-radius) nil true)
-        consolidated-strut-mapping (consolidate-struts 0.0075 (map last the-struts))
-        consolidated-struts (consolidate-struts the-struts consolidated-strut-mapping)
+(defn icosa-5v-struts [smaller-radius extra-struts extra-length margin]
+  (let [the-struts (struts 5 smaller-radius (* 1.618034 smaller-radius) #_smaller-radius true)
+        consolidated-strut-mapping (consolidate-struts-mapping margin (map last the-struts))
+        consolidated-struts (consolidate-struts the-struts consolidated-strut-mapping 5)
         best-cuts (find-best-cuts (map #(-> %
                                             (dissoc :struts)
-                                            (update-in [:length] + (or extra-length 0.3))
-                                            (update-in [:count] + (or extra-struts 1)))
+                                            (update-in [:length] + extra-length)
+                                            (update-in [:count] + extra-struts))
                                        consolidated-struts))]
     {:struts consolidated-struts
+     :max-strut-length (->> the-struts (map last) distinct sort last)
      :cuts best-cuts
-     :diff-from-old-big-dome (- (* 20 20 Math/PI)
-                                (* smaller-radius smaller-radius 1.618 Math/PI))}))
+     :diff-from-old-big-dome (- (* smaller-radius smaller-radius 1.618 Math/PI) (* 20 20 Math/PI))}))
+
+(defn summarize-options [& [extra-struts extra-length margin]]
+  (pprint
+   (for [i (range 12 19)]
+     (let [{:keys [struts cuts diff-from-old-big-dome max-strut-length]} (icosa-5v-struts i (or extra-struts 1) (or extra-length 0.3) (or margin 0.0075))
+           conduit-length (->> (icosa-5v-struts i 0 (or extra-length 0.3) (or margin 0.0075)) :cuts (mapcat (partial map :length)) (apply +))]
+       {:r i
+        :num-struts (count cuts)
+        :max-strut-length max-strut-length
+        :total-conduit-length-diff (- conduit-length 2400)
+        :area-diff diff-from-old-big-dome}))))
