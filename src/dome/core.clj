@@ -73,6 +73,12 @@
           ([2 [3 1]] [4 [6 2]]) [18. 90.]
           ([2 [3 2]] [4 [6 4]]) [54. 90.]
           ([2 [4 2]] [4 [8 4]]) [36. 116.5650512]
+          [3 [4 1]] [11.8185857 80.1168545]
+          [3 [4 2]] [36.0 79.1976831]
+          [3 [4 3]] [60.1814143 80.1168545]
+          [3 [5 2]] [24.1814143 99.8831455]
+          [3 [5 3]] [47.8185858 99.8831455]
+          [3 [6 3]] [36.0 116.5650512]
           [4 [5 1]] [8.7723551 75.4545635]
           [4 [5 2]] [26.2676986 73.9549430]
           [4 [5 3]] [45.7323015 73.9549430]
@@ -151,11 +157,11 @@
                              (concat
                               ["model = Sketchup.active_model" "entities = model.active_entities"]
                               (for [[p1 p2] struts
-                                    [delta-phi m] (if icosa?
-                                                    [[0 1] [72 1] [144 1] [216 1] [288 1] [0 -1] [72 -1] [144 -1] [216 -1] [288 -1]]
-                                                    [[-90 1] [0 1] [90 -1] [180 -1]])
-                                    :let [c1 (->cartesian (update-in p1 [:phi] + delta-phi))
-                                          c2 (->cartesian (update-in p2 [:phi] + delta-phi))]]
+                                    [delta-phi m] #_[[0 1] [71 1] [144 1]]  (if icosa?
+                                                                              [[0 1] [72 1] [144 1] [216 1] [288 1] [0 -1] [72 -1] [144 -1] [216 -1] [288 -1]]
+                                                                              [[-90 1] [0 1] [90 -1] [180 -1]])
+                                    :let [c1 (->cartesian (update-in p1 [:phi] + (Math/toRadians delta-phi)))
+                                          c2 (->cartesian (update-in p2 [:phi] + (Math/toRadians delta-phi)))]]
                                 (format "entities.add_line [%s, %s, %s], [%s, %s, %s]"
                                         (* m (:x c1)) (:y c1) (* m (:z c1))
                                         (* m (:x c2)) (:y c2) (* m (:z c2))))))))
@@ -263,6 +269,20 @@
                                             (update-in [:length] + extra-length)
                                             (update-in [:count] + extra-struts))
                                        consolidated-struts))]
+    (->> consolidated-struts (map #(let [l (:length %)]
+                                     (->> %
+                                          :struts
+                                          (map first)
+                                          sort
+                                          ((juxt last first))
+                                          (map (fn [x] (Math/abs (- x l))))
+                                          sort
+                                          last)))
+         (remove zero?)
+         sort
+         last
+         (* 12)
+         clojure.pprint/pprint)
     {:struts consolidated-struts
      :max-strut-length (->> the-struts (map last) distinct sort last)
      :cuts best-cuts
@@ -270,11 +290,12 @@
 
 (defn summarize-options [& [extra-struts extra-length margin]]
   (pprint
-   (for [i (range 12 19)]
-     (let [{:keys [struts cuts diff-from-old-big-dome max-strut-length]} (icosa-5v-struts i (or extra-struts 1) (or extra-length 0.3) (or margin 0.0075))
+   (for [i (range 16 17)]
+     (let [{:keys [struts cuts diff-from-old-big-dome max-strut-length]} (icosa-5v-struts i (or extra-struts 1) (or extra-length 0.2) (or margin (/ 0.125 12.0)))
            conduit-length (->> (icosa-5v-struts i 0 (or extra-length 0.3) (or margin 0.0075)) :cuts (mapcat (partial map :length)) (apply +))]
        {:r i
         :num-struts (count cuts)
+        :num-lengths (count struts)
         :max-strut-length max-strut-length
         :total-conduit-length-diff (- conduit-length 2400)
         :area-diff diff-from-old-big-dome}))))
