@@ -198,6 +198,7 @@
 
 ;; deciding how to cut conduit
 (defn find-best-cuts [all-struts]
+  (assert (every? #(<= (:length %) 10) all-struts))
   (let [add (fn [cuts curr]
               (->> curr
                    (map #(dissoc % :count))
@@ -209,7 +210,7 @@
         (if (seq curr) (add cuts curr) cuts)
         (if-let [to-add (->> remaining
                              (filter (fn [{l :length c :count}]
-                                       (and (> c 0) (< l (- 10 (apply + 0 (map :length curr)))))))
+                                       (and (> c 0) (< l (- 20 (apply + 0 (map :length curr)))))))
                              (sort-by :length)
                              last)]
           (recur cuts
@@ -226,25 +227,27 @@
 
 ;; for 5v icosa
 
-(def +icosa-5v-extras+ #{#{[5 2] [5 3]}
-                         #{[5 2] [6 3]}
-                         #{[5 3] [6 3]}
-                         #{[5 3] [6 4]}
-                         #{[6 3] [6 4]}
-                         #{[6 3] [7 4]}
-                         #{[6 4] [7 4]}
-                         #{[6 4] [7 5]}
-                         #{[7 4] [7 5]}
-                         #{[7 4] [8 5]}})
+(defn strut-count-dev [[_ [x1 y1] [x2 y2]] freq]
+  (let [odd (odd? freq)
+        m2 (int (/ freq 2))
+        m1 (inc m2)]
+    (+ (if (every? #{m1 m2} [y1 y2]) 1 0)
+       (if (every? #{m1 m2} [x1 x2]) 1 0)
+       (if (every? #{m1 m2} [(- x1 y1) (- x2 y2)]) 1 0))))
 
-(defn strut-count [struts freq]
-  (+ (* 5 (count struts))
-     (cond
-      (= 5 freq)
-      (->> struts (filter (fn [[_ p1 p2]] (+icosa-5v-extras+ #{p1 p2}))) count (* 2))
+(defn dont-count-strut? [[_ [x1 y1] [x2 y2]] freq]
+  (let [odd (odd? freq)
+        m2 (/ freq 2)
+        m1 (inc m2)]
+    (or (and (= x1 y1) (= x2 y2))
+        (= freq y1 y2))))
 
-      :else
-      (assert false))))
+(defn strut-count [freq strut]
+  (when-not (dont-count-strut? strut freq)
+    (+ 5 (strut-count-dev strut freq))))
+
+(defn struts-count [freq struts]
+  (apply + (keep (partial strut-count freq) struts)))
 
 (defn consolidate-struts [the-struts consolidated-strut-mapping freq]
   (->> the-struts
@@ -257,45 +260,36 @@
                       (let [struts (map first v)]
                         {:id i
                          :length k
-                         :count (strut-count struts freq)
+                         :count (struts-count freq struts)
                          :struts struts})))))
 
-(defn icosa-5v-struts [smaller-radius extra-struts extra-length margin]
-  (let [the-struts (struts 5 smaller-radius (* 1.618034 smaller-radius) #_smaller-radius true)
+(defn icosa-struts [freq smaller-radius extra-struts extra-length margin]
+  (let [the-struts (struts freq smaller-radius (* 1.618034 smaller-radius) #_smaller-radius true)
         consolidated-strut-mapping (consolidate-struts-mapping margin (map last the-struts))
-        consolidated-struts (consolidate-struts the-struts consolidated-strut-mapping 5)
+        consolidated-struts (consolidate-struts the-struts consolidated-strut-mapping freq)
         best-cuts (find-best-cuts (map #(-> %
                                             (dissoc :struts)
                                             (update-in [:length] + extra-length)
                                             (update-in [:count] + extra-struts))
                                        consolidated-struts))]
-    (->> consolidated-struts (map #(let [l (:length %)]
-                                     (->> %
-                                          :struts
-                                          (map first)
-                                          sort
-                                          ((juxt last first))
-                                          (map (fn [x] (Math/abs (- x l))))
-                                          sort
-                                          last)))
-         (remove zero?)
-         sort
-         last
-         (* 12)
-         clojure.pprint/pprint)
     {:struts consolidated-struts
      :max-strut-length (->> the-struts (map last) distinct sort last)
      :cuts best-cuts
-     :diff-from-old-big-dome (- (* smaller-radius smaller-radius 1.618 Math/PI) (* 20 20 Math/PI))}))
+     :diff-from-old-big-dome (let [old (* 20 20 Math/PI)]
+                               (/ (- (* smaller-radius smaller-radius 1.618 Math/PI) old) old))}))
 
-(defn summarize-options [& [extra-struts extra-length margin]]
+(defn summarize-options [& [extra-struts extra-length margin freq]]
   (pprint
    (for [i (range 16 17)]
-     (let [{:keys [struts cuts diff-from-old-big-dome max-strut-length]} (icosa-5v-struts i (or extra-struts 1) (or extra-length 0.2) (or margin (/ 0.125 12.0)))
-           conduit-length (->> (icosa-5v-struts i 0 (or extra-length 0.3) (or margin 0.0075)) :cuts (mapcat (partial map :length)) (apply +))]
+     (let [{:keys [struts cuts diff-from-old-big-dome max-strut-length]} (icosa-struts (or freq 5) i (or extra-struts 1) (or extra-length 0.2) (or margin (/ 0.125 12.0)))
+           no-extra-struts (icosa-struts (or freq 5) i 0 (or extra-length 0.3) (or margin 0.0075))
+           conduit-length (->> no-extra-struts :cuts (mapcat (partial map :length)) (apply +))]
        {:r i
-        :num-struts (count cuts)
-        :num-lengths (count struts)
+        :num-conduit-pieces-to-buy (count cuts)
+        :num-struts (->> no-extra-struts :cuts (map count) (apply +))
+        :num-struts-with-spares (->> cuts (map count) (apply +))
+        :num-distinct-lengths (count struts)
         :max-strut-length max-strut-length
-        :total-conduit-length-diff (- conduit-length 2400)
-        :area-diff diff-from-old-big-dome}))))
+        :total-conduit-length-diff (let [old 2400.] (/ (- conduit-length old) old))
+        :area-diff diff-from-old-big-dome
+        #_#_:struts (sort-by first (map (juxt :length :count) struts))}))))
