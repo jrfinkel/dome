@@ -1,5 +1,6 @@
 (ns dome.core
-  (:use clojure.pprint))
+  (:use clojure.pprint)
+  (:require [clojure.string :as str]))
 
 ;;; helpers
 
@@ -210,7 +211,7 @@
         (if (seq curr) (add cuts curr) cuts)
         (if-let [to-add (->> remaining
                              (filter (fn [{l :length c :count}]
-                                       (and (> c 0) (< l (- 20 (apply + 0 (map :length curr)))))))
+                                       (and (> c 0) (< l (- 10 (apply + 0 (map :length curr)))))))
                              (sort-by :length)
                              last)]
           (recur cuts
@@ -276,7 +277,7 @@
      :max-strut-length (->> the-struts (map last) distinct sort last)
      :cuts best-cuts
      :diff-from-old-big-dome (let [old (* 20 20 Math/PI)]
-                               (/ (- (* smaller-radius smaller-radius 1.618 Math/PI) old) old))}))
+                               (/ (- (* smaller-radius smaller-radius 1.618034 Math/PI) old) old))}))
 
 (defn summarize-options [& [extra-struts extra-length margin freq]]
   (pprint
@@ -293,3 +294,41 @@
         :total-conduit-length-diff (let [old 2400.] (/ (- conduit-length old) old))
         :area-diff diff-from-old-big-dome
         #_#_:struts (sort-by first (map (juxt :length :count) struts))}))))
+
+(defn print-cuts [cuts]
+  (->> cuts
+       frequencies
+       (map #(->> %
+                  key
+                  (map (fn [strut] (format "%s,%s" (:id strut) (:length strut))))
+                  (str/join ",")
+                  (format "%s,%s" (val %))))
+       (str/join "\n")))
+
+(defn print-struts [struts]
+  (->> struts
+       (sort-by :id)
+       (map #(str/join "," ((juxt :id :length :count) %)))
+       (str/join "\n")))
+
+(defn the-shady-waffle-dome [& [file-base]]
+  (let [{:keys [struts cuts]} (icosa-struts 5 16 1 0.2 (/ 0.125 12.0))
+        no-extra-struts (icosa-struts 5 16 0 0.3 0.0075)
+        conduit-length (->> no-extra-struts :cuts (mapcat (partial map :length)) (apply +))
+        cut-filename (format "%s-cuts.csv" file-base)
+        strut-filename (format "%s-struts.csv" file-base)]
+    (when file-base
+      (spit cut-filename (print-cuts cuts))
+      (spit strut-filename (print-struts struts)))
+    (merge
+     {:radius-1 16
+      :radius-2 (* 16 1.618034)
+      :num-conduit-pieces-to-buy (count cuts)
+      :num-struts (->> no-extra-struts :cuts (map count) (apply +))
+      :num-spares 1
+      :num-distinct-lengths (count struts)
+      :struts struts
+      :cuts cuts}
+     (when file-base
+       {:struts-file strut-filename
+        :cuts-filen cut-filename}))))
