@@ -167,12 +167,6 @@
                                         (* m (:x c1)) (:y c1) (* m (:z c1))
                                         (* m (:x c2)) (:y c2) (* m (:z c2))))))))
 
-(defn display [struts]
-  (pprint
-   (map (fn [[p1 p2 dist]]
-          [(:point-2d p2) (:point-2d p1) dist])
-        struts)))
-
 ;; combining struts that are similar in length
 (defn within-difference? [margin cluster]
   (let [min-x (apply min cluster)
@@ -310,6 +304,8 @@
        (sort-by :id)
        (map #(str/join "," ((juxt :id :length :count) %)))
        (str/join "\n")))
+
+;;; OUR MOTHERFUCKING DOME!!!!!
 
 (defn the-shady-waffle-dome [& [file-base]]
   (let [{:keys [struts cuts]} (icosa-struts 5 16 1 0.2 (/ 0.125 12.0))
